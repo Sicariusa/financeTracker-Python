@@ -1,10 +1,10 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
+
+
+from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
-from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField
-from wtforms.validators import DataRequired, Length, Email, EqualTo, ValidationError
+from flask_cors import CORS
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import os
@@ -12,7 +12,14 @@ import secrets
 from sqlalchemy import func, extract
 from email_validator import validate_email, EmailNotValidError
 
+
+# In backend/app.py
+from flask_cors import CORS
+# app = Flask(__name__)
+# CORS(app, supports_credentials=True)  # Enable CORS for all routes
 app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000"], "supports_credentials": True}})
+
 # Generate a secure random secret key
 app.config['SECRET_KEY'] = secrets.token_hex(32)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///finance.db'
@@ -21,8 +28,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
-login_manager.login_view = 'login'
-login_manager.login_message_category = 'info'
+login_manager.session_protection = "strong"
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -45,95 +51,69 @@ class Transaction(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     user = relationship('User', back_populates='transactions')
 
-class RegistrationForm(FlaskForm):
-    username = StringField('Username', 
-        validators=[DataRequired(), Length(min=2, max=20)])
-    email = StringField('Email', 
-        validators=[DataRequired(), Email()])
-    password = PasswordField('Password', 
-        validators=[DataRequired(), Length(min=6)])
-    confirm_password = PasswordField('Confirm Password', 
-        validators=[DataRequired(), EqualTo('password')])
-    submit = SubmitField('Sign Up')
-
-    def validate_username(self, username):
-        user = User.query.filter_by(username=username.data).first()
-        if user:
-            raise ValidationError('That username is taken. Please choose a different one.')
-
-    def validate_email(self, email):
-        user = User.query.filter_by(email=email.data).first()
-        if user:
-            raise ValidationError('That email is taken. Please choose a different one.')
-
-class LoginForm(FlaskForm):
-    email = StringField('Email', 
-        validators=[DataRequired(), Email()])
-    password = PasswordField('Password', 
-        validators=[DataRequired()])
-    submit = SubmitField('Login')
-
 # Create database tables
 with app.app_context():
     db.create_all()
 
-@app.route("/register", methods=['GET', 'POST'])
+@app.route('/api/register', methods=['POST'])
 def register():
-    if current_user.is_authenticated:
-        return redirect(url_for('index'))
-    
-    form = RegistrationForm()
-    if form.validate_on_submit():
-        # Validate email format
-        try:
-            valid = validate_email(form.email.data)
-            email = valid.email
-        except EmailNotValidError:
-            flash('Invalid email address.', 'danger')
-            return render_template('register.html', title='Register', form=form)
-        
-        # Hash the password
-        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
-        
-        # Create new user
-        user = User(username=form.username.data, 
-                    email=email, 
-                    password=hashed_password)
-        
-        db.session.add(user)
-        db.session.commit()
-        
-        flash(f'Account created for {form.username.data}! You can now log in.', 'success')
-        return redirect(url_for('login'))
-    
-    return render_template('register.html', title='Register', form=form)
+    data = request.json
+    try:
+        # Validate email
+        valid = validate_email(data['email'])
+        email = valid.email
+    except EmailNotValidError:
+        return jsonify({'error': 'Invalid email address'}), 400
 
-@app.route("/login", methods=['GET', 'POST'])
+    # Check if user already exists
+    existing_user = User.query.filter_by(email=email).first()
+    if existing_user:
+        return jsonify({'error': 'Email already registered'}), 400
+
+    # Hash password
+    hashed_password = bcrypt.generate_password_hash(data['password']).decode('utf-8')
+    
+    # Create new user
+    new_user = User(
+        username=data['username'], 
+        email=email, 
+        password=hashed_password
+    )
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/api/login', methods=['POST'])
 def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('index'))
+    data = request.json
+    user = User.query.filter_by(email=data['email']).first()
     
-    form = LoginForm()
-    if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
-        if user and bcrypt.check_password_hash(user.password, form.password.data):
-            login_user(user)
-            flash('Login successful!', 'success')
-            return redirect(url_for('index'))
-        else:
-            flash('Login unsuccessful. Please check email and password.', 'danger')
+    if user and bcrypt.check_password_hash(user.password, data['password']):
+        login_user(user)
+        return jsonify({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email
+        }), 200
     
-    return render_template('login.html', title='Login', form=form)
+    return jsonify({'error': 'Invalid credentials'}), 401
 
-@app.route("/logout")
+@app.route('/api/logout', methods=['POST'])
+@login_required
 def logout():
     logout_user()
-    return redirect(url_for('login'))
+    return jsonify({'message': 'Logged out successfully'}), 200
 
-@app.route('/')
+@app.route('/api/current_user')
 @login_required
-def index():
-    return render_template('index.html')
+def get_current_user():
+    return jsonify({
+        'id': current_user.id,
+        'username': current_user.username,
+        'email': current_user.email
+    }), 200
 
 @app.route('/api/transactions', methods=['GET', 'POST'])
 @login_required
@@ -150,7 +130,7 @@ def handle_transactions():
         )
         db.session.add(transaction)
         db.session.commit()
-        return jsonify({'message': 'Transaction added successfully'})
+        return jsonify({'message': 'Transaction added successfully'}), 201
     
     # Fetch only current user's transactions
     transactions = Transaction.query.filter_by(user_id=current_user.id)\
@@ -162,7 +142,7 @@ def handle_transactions():
         'category': t.category,
         'description': t.description,
         'date': t.date.strftime('%Y-%m-%d')
-    } for t in transactions])
+    } for t in transactions]), 200
 
 @app.route('/api/analytics')
 @login_required
@@ -185,7 +165,7 @@ def get_analytics():
         'total_expenses': expenses,
         'balance': income - expenses,
         'category_expenses': dict(category_expenses)
-    })
+    }), 200
 
 @app.route('/api/analytics/monthly', methods=['GET'])
 @login_required
@@ -210,7 +190,7 @@ def get_monthly_analytics():
         
         monthly_summary[key][entry.type] = entry.total_amount
     
-    return jsonify(monthly_summary)
+    return jsonify(monthly_summary), 200
 
 @app.route('/api/analytics/trends', methods=['GET'])
 @login_required
@@ -241,7 +221,7 @@ def get_financial_trends():
     
     trends['income_expense_ratio'] = total_income / (total_expense or 1)
     
-    return jsonify(trends)
+    return jsonify(trends), 200
 
 @app.route('/api/analytics/cashflow', methods=['GET'])
 @login_required
@@ -264,7 +244,7 @@ def get_cashflow_analysis():
             'cumulative_balance': cumulative_balance
         })
     
-    return jsonify(cashflow)
+    return jsonify(cashflow), 200
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
