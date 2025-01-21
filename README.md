@@ -2,6 +2,10 @@
 
 ## Overview
 Financial Tracker is a comprehensive web-based application designed to help users manage their personal finances, track expenses, and gain insights into their spending habits.
+![Screenshot 2025-01-21 180138](https://github.com/user-attachments/assets/58979a61-ef40-4cef-ab77-3349e40879de)
+![Screenshot 2025-01-21 180147](https://github.com/user-attachments/assets/26898135-36f4-48e7-98b8-727b011e78f1)
+![Screenshot 2025-01-21 180155](https://github.com/user-attachments/assets/536fdb0d-9bfd-4476-b091-c25fbc01062f)
+
 
 ## 🌟 Features
 - 📊 Income and Expense Tracking
